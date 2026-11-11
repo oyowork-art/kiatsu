@@ -16,6 +16,7 @@
   :root {
     --bg: #f7f7f5; --card: #fff; --text: #222; --sub: #666; --grid: #e2e2de;
     --line: #333; --now: #333;
+    --lineNone: #a7abb0; /* 体調の記録がない部分の折れ線（淡い灰色） */
     /* 下がる＝青、上がる＝赤。3hPa以上は薄く、6hPa以上は濃く */
     --down1: rgba(50, 120, 230, .18); --down2: rgba(30, 90, 210, .42);
     --up1: rgba(225, 60, 50, .16); --up2: rgba(210, 40, 30, .40);
@@ -28,6 +29,7 @@
     :root {
       --bg: #161616; --card: #222; --text: #eee; --sub: #aaa; --grid: #383838;
       --line: #eee; --now: #ddd;
+      --lineNone: #7d8288;
       --down1: rgba(90, 150, 255, .20); --down2: rgba(90, 150, 255, .45);
       --up1: rgba(255, 90, 80, .18); --up2: rgba(255, 90, 80, .42);
       --downText: #7fb0ff; --upText: #fc8181;
@@ -172,7 +174,7 @@
       <span><span class="sw" style="background:var(--down1)"></span><span class="sw" style="background:var(--down2)"></span>下がる（薄い＝6時間で3hPa以上、濃い＝6hPa以上）</span>
       <span><span class="sw" style="background:var(--up1)"></span><span class="sw" style="background:var(--up2)"></span>上がる（薄い＝3hPa以上、濃い＝6hPa以上）</span>
       <span>｜ 縦線＝今</span>
-      <span>線の色＝体調の記録（次の記録まで同じ色）: <b style="color:var(--mood3)">○ふつう</b> <b style="color:var(--mood2)">△悪い</b> <b style="color:var(--mood1)">✕とても悪い</b>　記録がない部分と今より先は、もとの色</span>
+      <span>線の色＝体調の記録（次の記録まで同じ色）: <b style="color:var(--mood3)">○ふつう</b> <b style="color:var(--mood2)">△悪い</b> <b style="color:var(--mood1)">✕とても悪い</b>　記録がない部分と今より先は<b style="color:var(--lineNone)">灰色</b></span>
     </div>
     <div id="farNote" class="far" hidden>4日より先の予報は外れやすいので、大まかな目安として見てください。</div>
   </section>
@@ -492,8 +494,8 @@ function drawChart(a) {
   const recs = loadLog().filter(r => Math.abs(r.lat - place.lat) <= 0.25 && Math.abs(r.lon - place.lon) <= 0.25).sort((p, q) => p.t - q.t);
   // 時刻 t の色: t より前の一番新しい記録の色。記録がないときと、今より先（予報）は黒
   const colorAt = t => {
-    if (t > a.now) return "--line";
-    let c = "--line";
+    if (t > a.now) return "--lineNone";
+    let c = "--lineNone";
     for (const r of recs) { if (r.t <= t) c = "--mood" + r.score; else break; }
     return c;
   };
