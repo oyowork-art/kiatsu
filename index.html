@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>気圧チェック</title>
+<!-- ホーム画面に置いたとき用 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="気圧">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='22' fill='%232b6cb0'/%3E%3Cpolyline points='12,40 30,32 46,62 62,56 80,28 90,34' fill='none' stroke='white' stroke-width='9' stroke-linejoin='round' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #f7f7f5; --card: #fff; --text: #222; --sub: #666; --grid: #e2e2de;
+    --line: #333; --now: #333;
+    /* 下がる＝青、上がる＝赤。3hPa以上は薄く、6hPa以上は濃く */
+    --down1: rgba(50, 120, 230, .18); --down2: rgba(30, 90, 210, .42);
+    --up1: rgba(225, 60, 50, .16); --up2: rgba(210, 40, 30, .40);
+    --downText: #2462c4; --upText: #c53030;
+    --none: #2f855a; --warn1: #b7791f; --warn2: #c53030;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161616; --card: #222; --text: #eee; --sub: #aaa; --grid: #383838;
+      --line: #eee; --now: #ddd;
+      --down1: rgba(90, 150, 255, .20); --down2: rgba(90, 150, 255, .45);
+      --up1: rgba(255, 90, 80, .18); --up2: rgba(255, 90, 80, .42);
+      --downText: #7fb0ff; --upText: #fc8181;
+      --none: #68d391; --warn1: #f6c453; --warn2: #fc8181;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Hiragino Sans", "Yu Gothic UI", sans-serif; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; padding-top: max(16px, env(safe-area-inset-top)); }
+  .place { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+  .place h1 { font-size: 1.25rem; margin: 0; }
+  .place .src { font-size: .8rem; color: var(--sub); }
+  .links { display: flex; gap: 12px; margin-left: auto; }
+  .linkbtn { background: none; border: none; padding: 0; color: var(--line); font: inherit; font-size: .9rem; cursor: pointer; }
+  .card { background: var(--card); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .level-label { font-size: .9rem; color: var(--sub); }
+  .level { font-size: 3rem; font-weight: 800; line-height: 1.2; margin: 4px 0; }
+  .level.l0 { color: var(--none); } .level.l1 { color: var(--warn1); } .level.l2 { color: var(--warn2); }
+  .detail { font-size: .95rem; color: var(--sub); }
+  .now-p { font-size: 1rem; margin-top: 8px; }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { fill: var(--sub); font-size: 11px; }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: .85rem; color: var(--sub); margin-top: 8px; }
+  .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; vertical-align: -2px; margin-right: 4px; }
+  ul.periods { margin: 0; padding-left: 1.2em; font-size: .95rem; }
+  ul.periods li { margin: 4px 0; }
+  .note { font-size: .75rem; color: var(--sub); text-align: center; margin: 24px 0 8px; }
+  .err { color: var(--warn2); }
+  button, input { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--grid);
+           background: var(--card); color: var(--text); }
+  input { font-size: 16px; /* iPhoneで拡大されないように */ flex: 1; min-width: 0; }
+  .search form { display: flex; gap: 8px; }
+  .search .msg { font-size: .9rem; color: var(--sub); margin: 0 0 8px; }
+  .cands { list-style: none; margin: 8px 0 0; padding: 0; }
+  .cands button { width: 100%; text-align: left; margin-top: 6px; }
+  .cands small { color: var(--sub); }
+  [hidden] { display: none !important; }
+  .range { display: flex; gap: 0; margin-bottom: 12px; }
+  .range button { flex: 1; border-radius: 0; padding: 6px 8px; font-size: .9rem; }
+  .range button:first-child { border-radius: 8px 0 0 8px; }
+  .range button:last-child { border-radius: 0 8px 8px 0; border-left: none; }
+  .range button.on { background: var(--now); color: var(--bg); border-color: var(--now); font-weight: 700; }
+  .far { font-size: .8rem; color: var(--sub); margin-top: 6px; }
+  .moods { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0; }
+  .moods button { padding: 14px 4px; }
+  .moods b { font-size: 1.05rem; white-space: nowrap; }
+  table.rel { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  table.rel td { padding: 6px 4px; border-top: 1px solid var(--grid); vertical-align: middle; }
+  table.rel td.num { text-align: right; white-space: nowrap; }
+  .bar { height: 10px; border-radius: 5px; background: var(--now); opacity: .7; }
+  .relnote { font-size: .95rem; margin: 10px 0; }
+  ul.log { list-style: none; padding: 0; margin: 8px 0; font-size: .85rem; }
+  ul.log li { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid var(--grid); }
+  ul.log li span { flex: 1; }
+  ul.log button { padding: 2px 10px; }
+  details summary { cursor: pointer; color: var(--line); font-size: .9rem; margin-top: 8px; }
+  form.past { display: grid; gap: 10px; margin-top: 10px; }
+  form.past label { display: flex; align-items: center; gap: 8px; font-size: .95rem; }
+  form.past input, form.past select { flex: 1; font-size: 16px; padding: 8px; border-radius: 8px;
+    border: 1px solid var(--grid); background: var(--card); color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+  <div class="place">
+    <h1 id="placeName">福島市</h1>
+    <span id="placeSrc" class="src"></span>
+    <span class="links">
+      <button id="useGps" class="linkbtn" type="button">現在地</button>
+      <button id="showSearch" class="linkbtn" type="button">都市を選ぶ</button>
+    </span>
+  </div>
+
+  <section id="search" class="card search" hidden>
+    <p id="searchMsg" class="msg">都市名を入れてください（例: 郡山、仙台、東京）</p>
+    <form id="searchForm">
+      <input id="cityInput" type="search" placeholder="都市名" value="福島市" autocomplete="off" enterkeyhint="search">
+      <button type="submit">表示</button>
+    </form>
+    <ul id="cands" class="cands"></ul>
+  </section>
+
+  <section class="card">
+    <div class="level-label">今日の注意度</div>
+    <div id="level" class="level">読み込み中…</div>
+    <div id="detail" class="detail"></div>
+    <div id="nowp" class="now-p"></div>
+  </section>
+
+  <section class="card">
+    <div class="level-label">今の体調を記録</div>
+    <div class="moods">
+      <button type="button" data-score="1"><b>とても悪い</b></button>
+      <button type="button" data-score="2"><b>悪い</b></button>
+      <button type="button" data-score="3"><b>ふつう</b></button>
+    </div>
+    <div id="recMsg" class="detail"></div>
+    <details id="pastBox">
+      <summary>過去の体調を入力する</summary>
+      <form id="pastForm" class="past">
+        <label>いつ <input id="pastWhen" type="datetime-local" required></label>
+        <label>体調
+          <select id="pastScore">
+            <option value="1">とても悪い</option><option value="2" selected>悪い</option><option value="3">ふつう</option>
+          </select>
+        </label>
+        <div class="far">場所: <b id="pastPlace">福島市</b>（違うときは、いちばん上の「都市を選ぶ」で場所を変えてから入力）</div>
+        <button type="submit">この内容で記録</button>
+      </form>
+    </details>
+  </section>
+
+  <section class="card">
+    <div class="range" role="group" aria-label="表示する期間">
+      <button type="button" data-days="3">3日先まで</button>
+      <button type="button" data-days="10">10日先まで</button>
+    </div>
+    <svg id="chart" viewBox="0 0 900 360" role="img" aria-label="気圧の折れ線グラフ"></svg>
+    <div class="legend">
+      <span><span class="sw" style="background:var(--down1)"></span><span class="sw" style="background:var(--down2)"></span>下がる（薄い＝6時間で3hPa以上、濃い＝6hPa以上）</span>
+      <span><span class="sw" style="background:var(--up1)"></span><span class="sw" style="background:var(--up2)"></span>上がる（薄い＝3hPa以上、濃い＝6hPa以上）</span>
+      <span>｜ 縦線＝今</span>
+      <span>体調の記録: ○ふつう △悪い ✕とても悪い</span>
+    </div>
+    <div id="farNote" class="far" hidden>4日より先の予報は外れやすいので、大まかな目安として見てください。</div>
+  </section>
+
+  <section class="card">
+    <div class="level-label" style="margin-bottom:6px">変化が大きい時間帯</div>
+    <ul id="periods" class="periods"></ul>
+    <div style="margin-top:12px"><button id="reload" type="button">更新</button> <span id="updated" class="detail"></span></div>
+  </section>
+
+  <section class="card">
+    <div class="level-label" style="margin-bottom:6px">体調と気圧の変化（記録したときの、その前6時間の変化）</div>
+    <div id="relNote" class="relnote"></div>
+    <table class="rel"><tbody id="relTable"></tbody></table>
+    <svg id="scatter" viewBox="0 0 900 240" role="img" aria-label="気圧の変化と体調の散布図" style="margin-top:12px"></svg>
+    <div class="far">横＝記録したときの6時間の気圧の変化（左ほど下がった、右ほど上がった）、縦＝体調</div>
+    <details>
+      <summary>記録の一覧</summary>
+      <ul id="logList" class="log"></ul>
+      <button id="exportCsv" type="button">CSVで書き出す</button>
+    </details>
+    <div id="storeWarn" class="far err" hidden>この画面では記録を保存できません（閉じると消えます）。https で公開したページで使ってください。</div>
+  </section>
+
+  <p class="note">目安です。痛みが続くときは医療機関へ。<br>データ: Open-Meteo.com</p>
+</main>
+
+<script>
+const DEFAULT_PLACE = { name: "福島市", lat: 37.75, lon: 140.47, src: "" };
+const HOUR = 3600;
+const LEVELS = ["なし", "やや注意", "注意"];
+let place = DEFAULT_PLACE;
+let last = null;
+// 表示する期間（何日先まで）。前に選んだものを覚えておく
+let rangeDays = 3;
+try { if (localStorage.getItem("kiatsuDays") === "10") rangeDays = 10; } catch (e) {}
+const $ = id => document.getElementById(id);
+
+// ---- 体調の記録（この端末のブラウザに保存） ----
+// 体調は3段階: 1 とても悪い、2 悪い、3 ふつう
+const MOODS = [null, "とても悪い", "悪い", "ふつう"];
+const MAX_SCORE = 3;
+const MARKS = [null, "✕", "△", "○"]; // 気圧のグラフに出す印
+const LOG_KEY = "kiatsuLog";
+let memLog = null; // 保存できない環境のときの置き場
+function loadLog() {
+  if (memLog) return memLog;
+  try {
+    // 5段階のころの記録（4・5）は「ふつう」として扱う
+    return JSON.parse(localStorage.getItem(LOG_KEY) || "[]").map(r => ({ ...r, score: Math.min(r.score, MAX_SCORE) }));
+  }
+  catch (e) { memLog = []; return memLog; }
+}
+function saveLog(log) {
+  log.sort((a, b) => a.t - b.t); // 過去の分をあとから入れても時刻順にしておく
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(log)); memLog = null; }
+  catch (e) { memLog = log; }
+  $("storeWarn").hidden = !memLog;
+}
+// 記録を、6時間の変化でグループ分けする（グラフの色と同じ区切り）
+const GROUPS = [
+  { name: "大きく下がった（6hPa以上）", test: c => c <= -6, color: "--down2" },
+  { name: "下がった（3〜6hPa）", test: c => c > -6 && c <= -3, color: "--down1" },
+  { name: "変化が小さい（3hPa未満）", test: c => c > -3 && c < 3, color: null },
+  { name: "上がった（3〜6hPa）", test: c => c >= 3 && c < 6, color: "--up1" },
+  { name: "大きく上がった（6hPa以上）", test: c => c >= 6, color: "--up2" },
+];
+const avg = xs => xs.reduce((s, v) => s + v, 0) / xs.length;
+
+// 6時間の変化量から注意度を決める（下がっても上がっても同じ）
+function levelOf(change) {
+  const a = Math.abs(change);
+  if (a >= 6) return 2;
+  if (a >= 3) return 1;
+  return 0;
+}
+
+// ---- 気圧の取得 ----
+async function loadPressure(lat, lon) {
+  // 過去24時間＋計算用に6時間、今後 rangeDays 日（最大16日まで取れる）
+  const url = "https://api.open-meteo.com/v1/forecast"
+    + `?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}`
+    + `&hourly=pressure_msl&past_hours=30&forecast_hours=${rangeDays * 24 + 1}`
+    + "&timezone=auto&timeformat=unixtime";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("HTTP " + res.status);
+  return res.json();
+}
+
+// ---- 地名検索（Open-Meteo Geocoding API） ----
+async function geocode(q) {
+  // 「東京」「大阪」だけだと見つからないことがあるので、「市」「都」を付けた名前でも探す
+  const names = [q];
+  if (!/[市町村区都道府県]$/.test(q)) names.push(q + "市", q + "都");
+  const lists = await Promise.all(names.map(async n => {
+    const url = "https://geocoding-api.open-meteo.com/v1/search?count=10&language=ja&format=json&name=" + encodeURIComponent(n);
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    return (await res.json()).results || [];
+  }));
+  const seen = new Set(), out = [];
+  for (const r of lists.flat()) {
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    out.push(r);
+  }
+  // 人口の多い順（人口が分からないものは後ろ）
+  out.sort((a, b) => (b.population || 0) - (a.population || 0));
+  return out.slice(0, 8);
+}
+
+// ---- 位置情報 ----
+function getPosition() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) return reject(new Error("この端末では位置情報が使えません"));
+    navigator.geolocation.getCurrentPosition(
+      p => resolve(p.coords),
+      e => reject(new Error(
+        e.code === 1 ? "位置情報が許可されていません" :
+        e.code === 3 ? "位置情報の取得に時間がかかりすぎました" : "位置情報が取れませんでした")),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60 * 1000 }
+    );
+  });
+}
+
+async function useGps() {
+  $("placeSrc").textContent = "現在地を確認中…";
+  try {
+    const c = await getPosition();
+    await show({ name: "現在地", lat: c.latitude, lon: c.longitude,
+                 src: `緯度 ${c.latitude.toFixed(2)}・経度 ${c.longitude.toFixed(2)}` });
+    $("search").hidden = true;
+  } catch (e) {
+    // 取れなかったら都市名の入力欄を出す
+    $("placeSrc").textContent = place.src;
+    $("searchMsg").textContent = e.message + "。都市名を入れてください（例: 郡山、仙台、東京）";
+    $("search").hidden = false;
+  }
+}
+
+// ---- 画面 ----
+function jst(t, offset) {
+  const d = new Date((t + offset) * 1000);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), wd: "日月火水木金土"[d.getUTCDay()] };
+}
+function fmt(t, offset) {
+  const j = jst(t, offset);
+  return `${j.m}/${j.d}(${j.wd}) ${j.h}時`;
+}
+const signed = v => (v > 0 ? "+" : "") + v.toFixed(1);
+
+function analyze(data) {
+  const times = data.hourly.time, p = data.hourly.pressure_msl, off = data.utc_offset_seconds;
+  const idx = new Map(times.map((t, i) => [t, i]));
+  // 各時刻 t について「6時間前から t まで」の変化
+  const rows = times.map((t, i) => {
+    const j = idx.get(t - 6 * HOUR);
+    if (j === undefined || p[i] == null || p[j] == null) return { t, p: p[i], change: null, level: 0 };
+    const change = Math.round((p[i] - p[j]) * 10) / 10;
+    return { t, p: p[i], change, level: levelOf(change) };
+  });
+
+  const now = Date.now() / 1000;
+  const today = jst(now, off);
+  const isToday = t => { const j = jst(t, off); return j.y === today.y && j.m === today.m && j.d === today.d; };
+
+  // 今日（その場所の時間で 0時〜23時）の中で一番大きな変化
+  let worst = null;
+  for (const r of rows) {
+    if (r.change == null || !isToday(r.t)) continue;
+    if (!worst || Math.abs(r.change) > Math.abs(worst.change)) worst = r;
+  }
+
+  // 表示する範囲: 今から24時間前〜 rangeDays 日後
+  const start = now - 24 * HOUR, end = now + rangeDays * 24 * HOUR;
+  const shown = rows.filter(r => r.t >= start - HOUR && r.t <= end + HOUR && r.p != null);
+
+  // 注意の時間帯（6時間の窓）
+  const bands = [];
+  for (const r of rows) {
+    if (r.level === 0) continue;
+    const s = r.t - 6 * HOUR, e = r.t;
+    if (e < start || s > end) continue;
+    bands.push({ s, e, level: r.level, change: r.change });
+  }
+  // 続いている時間帯（同じ向きのもの）をつなげて一覧にする
+  const merged = [];
+  for (const b of [...bands].sort((a, c) => a.s - c.s)) {
+    const prev = merged[merged.length - 1];
+    if (prev && b.s <= prev.e && Math.sign(b.change) === Math.sign(prev.change)) {
+      prev.e = Math.max(prev.e, b.e);
+      prev.level = Math.max(prev.level, b.level);
+      if (Math.abs(b.change) > Math.abs(prev.change)) prev.change = b.change;
+    } else merged.push({ ...b });
+  }
+
+  // 今の気圧（今の時刻に一番近い値）
+  let cur = rows[0];
+  for (const r of rows) if (Math.abs(r.t - now) < Math.abs(cur.t - now)) cur = r;
+
+  return { rows, shown, bands, merged, worst, now, off, start, end, cur };
+}
+
+function render(a) {
+  const lv = a.worst ? a.worst.level : 0;
+  const el = $("level");
+  el.textContent = LEVELS[lv];
+  el.className = "level l" + lv;
+  el.style.fontSize = "";
+  $("detail").textContent = a.worst
+    ? `今日いちばん大きい6時間の変化: ${signed(a.worst.change)} hPa（${fmt(a.worst.t - 6 * HOUR, a.off)}〜${jst(a.worst.t, a.off).h}時、${a.worst.change < 0 ? "下がる" : "上がる"}）`
+    : "";
+  const c = a.cur;
+  $("nowp").textContent = c.p != null
+    ? `今の気圧: ${c.p.toFixed(1)} hPa` + (c.change != null ? `（6時間で ${signed(c.change)}）` : "")
+    : "";
+
+  const ul = $("periods");
+  ul.innerHTML = "";
+  if (a.merged.length === 0) {
+    ul.innerHTML = "<li>この期間に大きな変化はありません</li>";
+  } else {
+    for (const m of a.merged) {
+      const li = document.createElement("li");
+      const b = document.createElement("b");
+      b.textContent = LEVELS[m.level];
+      b.style.color = `var(${m.level === 2 ? "--warn2" : "--warn1"})`;
+      const dir = document.createElement("span");
+      dir.textContent = m.change < 0 ? "↓下がる" : "↑上がる";
+      dir.style.color = `var(${m.change < 0 ? "--downText" : "--upText"})`;
+      dir.style.fontWeight = "700";
+      li.append(b, " ", dir, ` ${fmt(m.s, a.off)}〜${fmt(m.e, a.off)}　最大 ${signed(m.change)} hPa`);
+      ul.appendChild(li);
+    }
+  }
+  drawChart(a);
+  const u = new Date();
+  $("updated").textContent = `${u.getHours()}:${String(u.getMinutes()).padStart(2, "0")} 更新`;
+}
+
+function drawChart(a) {
+  const svg = $("chart");
+  // 画面の幅に合わせて描く（スマホで文字が小さくならないように）
+  const W = Math.max(320, Math.round(svg.clientWidth || 900));
+  const H = W < 600 ? 260 : 360, L = 40, R = 8, T = 22, B = 40;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const ps = a.shown.map(r => r.p);
+  let lo = Math.floor(Math.min(...ps) - 1), hi = Math.ceil(Math.max(...ps) + 1);
+  if (hi - lo < 10) { const mid = (hi + lo) / 2; lo = Math.floor(mid - 5); hi = Math.ceil(mid + 5); }
+  const x = t => L + (t - a.start) / (a.end - a.start) * (W - L - R);
+  const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  const clampX = t => Math.min(Math.max(x(t), L), W - R);
+  let s = "";
+
+  // 背景の塗り（下がる＝青、上がる＝赤。薄い＝3hPa以上、濃い＝6hPa以上）
+  // 6時間の区間が重なって色が濃く見えないよう、1時間ごとに一番強い1色だけ塗る
+  const cells = new Map();
+  for (const b of a.bands) {
+    for (let t = b.s; t < b.e; t += HOUR) {
+      const c = cells.get(t);
+      if (!c || b.level > c.level || (b.level === c.level && Math.abs(b.change) > Math.abs(c.change))) cells.set(t, b);
+    }
+  }
+  // 同じ色が続くところは1つの四角にまとめる（境目に線が出ないように）
+  const runs = [];
+  for (const t of [...cells.keys()].sort((p, q) => p - q)) {
+    const b = cells.get(t);
+    const color = (b.change < 0 ? "--down" : "--up") + b.level;
+    const prev = runs[runs.length - 1];
+    if (prev && prev.color === color && prev.e === t) prev.e = t + HOUR;
+    else runs.push({ s: t, e: t + HOUR, color });
+  }
+  for (const r of runs) {
+    const x1 = clampX(r.s), x2 = clampX(r.e);
+    if (x2 <= x1) continue;
+    s += `<rect x="${x1}" y="${T}" width="${x2 - x1}" height="${H - T - B}" fill="var(${r.color})"/>`;
+  }
+
+  // 横の目盛り（hPa）
+  const step = (hi - lo) > 20 ? 5 : 2;
+  for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
+    s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>`;
+    s += `<text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  }
+  // 縦の目盛り（0時は日付も）
+  const long = (a.end - a.start) > 5 * 24 * HOUR;
+  const first = Math.ceil(a.start / HOUR) * HOUR;
+  let dayNo = 0;
+  for (let t = first; t <= a.end; t += HOUR) {
+    const j = jst(t, a.off);
+    const xx = x(t);
+    if (long) {
+      // 長い期間は1日ごとの線だけ。せまい画面では日付を1日おきにする
+      if (j.h !== 0) continue;
+      s += `<line x1="${xx}" x2="${xx}" y1="${T}" y2="${H - B}" stroke="var(--grid)"/>`;
+      if (W >= 600 || dayNo % 2 === 0) {
+        s += `<text x="${xx}" y="${H - B + 16}" text-anchor="middle">${j.m}/${j.d}</text>`;
+        s += `<text x="${xx}" y="${H - B + 32}" text-anchor="middle">(${j.wd})</text>`;
+      }
+      dayNo++;
+      continue;
+    }
+    if (j.h % (W < 600 ? 12 : 6) !== 0) continue;
+    s += `<line x1="${xx}" x2="${xx}" y1="${T}" y2="${H - B}" stroke="var(--grid)" ${j.h === 0 ? "" : 'stroke-dasharray="2 4"'}/>`;
+    s += `<text x="${xx}" y="${H - B + 16}" text-anchor="middle">${j.h}時</text>`;
+    if (j.h === 0) s += `<text x="${xx}" y="${H - B + 32}" text-anchor="middle">${j.m}/${j.d}(${j.wd})</text>`;
+  }
+
+  // 折れ線
+  const pts = a.shown.map(r => `${clampX(r.t).toFixed(1)},${y(r.p).toFixed(1)}`).join(" ");
+  s += `<polyline points="${pts}" fill="none" stroke="var(--line)" stroke-width="2.5" stroke-linejoin="round"/>`;
+
+  // 体調の記録を折れ線の上に点で出す（今表示している場所の近くで記録したものだけ）
+  for (const r of loadLog()) {
+    if (r.p == null || r.t < a.start || r.t > a.end) continue;
+    if (Math.abs(r.lat - place.lat) > 0.25 || Math.abs(r.lon - place.lon) > 0.25) continue;
+    const cx = x(r.t), cy = y(r.p);
+    s += `<circle cx="${cx}" cy="${cy}" r="9" fill="var(--card)" stroke="var(--now)" stroke-width="2"/>`;
+    s += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" style="fill:var(--now);font-weight:700">${MARKS[r.score]}</text>`;
+  }
+
+  // 今の縦線
+  const xn = x(a.now);
+  s += `<line x1="${xn}" x2="${xn}" y1="${T}" y2="${H - B}" stroke="var(--now)" stroke-width="2"/>`;
+  s += `<text x="${xn + 4}" y="${T + 12}" style="fill:var(--now);font-weight:700">今</text>`;
+  s += `<text x="4" y="2" dominant-baseline="hanging">hPa</text>`;
+
+  svg.innerHTML = s;
+}
+
+// 場所を決めて表示する
+let reqNo = 0;
+async function show(p) {
+  const my = ++reqNo; // 前の場所の結果が後から届いても上書きしない
+  place = p;
+  $("placeName").textContent = p.name;
+  $("placeSrc").textContent = p.src || "";
+  $("pastPlace").textContent = p.name;
+  document.title = `${p.name}の気圧`;
+  try {
+    const data = await loadPressure(p.lat, p.lon);
+    if (my !== reqNo) return;
+    last = analyze(data);
+    render(last);
+  } catch (e) {
+    if (my !== reqNo) return;
+    const el = $("level");
+    el.textContent = "取得できませんでした";
+    el.className = "level err";
+    el.style.fontSize = "1.5rem";
+    $("detail").textContent = "ネットにつながっているか確かめて、「更新」を押してください（" + e.message + "）";
+  }
+}
+
+// ---- 体調の記録と、気圧の変化との関係 ----
+// ある場所・ある時刻（一番近い正時）の気圧と、その前6時間の変化を取る
+// 直近約3か月は予報の API、それより前は過去データの API（archive）を使う
+async function pressureAt(lat, lon, t) {
+  const h = Math.round(t / HOUR) * HOUR;
+  const iso = s => new Date(s * 1000).toISOString().slice(0, 13) + ":00"; // UTC の YYYY-MM-DDTHH:00
+  const pick = d => {
+    const times = d.hourly.time, p = d.hourly.pressure_msl;
+    const i = times.indexOf(h), j = times.indexOf(h - 6 * HOUR);
+    if (i < 0 || p[i] == null) return null;
+    const change = (j >= 0 && p[j] != null) ? Math.round((p[i] - p[j]) * 10) / 10 : null;
+    return { p: p[i], change };
+  };
+  const q = `latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&hourly=pressure_msl&timezone=GMT&timeformat=unixtime`;
+  try {
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}&start_hour=${iso(h - 6 * HOUR)}&end_hour=${iso(h)}`);
+    if (res.ok) { const r = pick(await res.json()); if (r) return r; }
+  } catch (e) {}
+  const res = await fetch(`https://archive-api.open-meteo.com/v1/archive?${q}&start_date=${iso(h - 6 * HOUR).slice(0, 10)}&end_date=${iso(h).slice(0, 10)}`);
+  if (!res.ok) throw new Error("その日時の気圧が見つかりませんでした");
+  const r = pick(await res.json());
+  if (!r) throw new Error("その日時の気圧が見つかりませんでした");
+  return r;
+}
+
+// 記録を1件足す（場所 where の、時刻 t の気圧で）
+async function addRecord(t, score, where, msgEl) {
+  msgEl.textContent = "気圧を調べています…";
+  let pr;
+  try { pr = await pressureAt(where.lat, where.lon, t); }
+  catch (e) { msgEl.textContent = "記録できませんでした（" + e.message + "）"; return false; }
+  const log = loadLog();
+  log.push({ t, score, p: pr.p, change: pr.change, place: where.name, lat: where.lat, lon: where.lon });
+  saveLog(log);
+  const d = new Date(t * 1000);
+  msgEl.textContent = `記録しました: ${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}　${MOODS[score]}`
+    + `　${where.name}　気圧 ${pr.p.toFixed(1)} hPa` + (pr.change != null ? `、6時間で ${signed(pr.change)}` : "");
+  renderLog();
+  if (last) drawChart(last);
+  return true;
+}
+
+// 今の体調: 記録した場所は GPS で取り、取れないときは表示中の場所にする
+async function record(score) {
+  const t = Math.round(Date.now() / 1000);
+  $("recMsg").textContent = "場所を確認しています…";
+  let where = { name: place.name, lat: place.lat, lon: place.lon };
+  try {
+    const c = await getPosition();
+    const near = Math.abs(c.latitude - place.lat) < 0.1 && Math.abs(c.longitude - place.lon) < 0.1;
+    where = { name: near ? place.name : `現在地（${c.latitude.toFixed(2)}, ${c.longitude.toFixed(2)}）`, lat: c.latitude, lon: c.longitude };
+  } catch (e) { /* GPS が使えないときは表示中の場所 */ }
+  await addRecord(t, score, where, $("recMsg"));
+}
+
+function renderLog() {
+  const log = loadLog();
+  const withChange = log.filter(r => r.change != null);
+
+  // グループごとの記録数と、「悪い」「とても悪い」だった割合
+  const badRate = xs => Math.round(xs.filter(s => s <= 2).length / xs.length * 100);
+  const tb = $("relTable");
+  tb.innerHTML = "";
+  for (const g of GROUPS) {
+    const xs = withChange.filter(r => g.test(r.change)).map(r => r.score);
+    const tr = document.createElement("tr");
+    const rate = xs.length ? badRate(xs) : null;
+    tr.innerHTML = `<td><span class="sw" style="background:${g.color ? `var(${g.color})` : "transparent"};border:1px solid var(--grid)"></span>${g.name}</td>`
+      + `<td class="num">${xs.length}回</td>`
+      + `<td class="num">${rate == null ? "—" : `悪い ${rate}%`}</td>`
+      + `<td style="width:25%">${rate == null ? "" : `<div class="bar" style="width:${rate}%"></div>`}</td>`;
+    tb.appendChild(tr);
+  }
+
+  // ひとことのまとめ（大きく変化したときと、そうでないときの「悪い」の割合の差）
+  const big = withChange.filter(r => Math.abs(r.change) >= 3).map(r => r.score);
+  const small = withChange.filter(r => Math.abs(r.change) < 3).map(r => r.score);
+  let note;
+  if (withChange.length < 5) {
+    note = `記録 ${log.length} 回。5回以上たまると、傾向が見えてきます。`;
+  } else if (!big.length || !small.length) {
+    note = `記録 ${log.length} 回。気圧が大きく変わったときの記録と、変化が小さいときの記録の両方がたまると比べられます。`;
+  } else {
+    const rb = badRate(big), rs = badRate(small), diff = rb - rs;
+    note = `記録 ${log.length} 回。気圧が6時間で3hPa以上変わったときに「悪い」「とても悪い」だったのは ${rb}%、変化が小さいときは ${rs}%。`
+      + (diff >= 20 ? "大きく変わるときのほうが、体調が悪くなりやすいようです。"
+        : diff <= -20 ? "今のところ、大きく変わるときのほうが体調は良いようです。"
+        : "今のところ、はっきりした差はありません。");
+  }
+  $("relNote").textContent = note;
+
+  drawScatter(withChange);
+
+  // 一覧（新しい順）
+  const ul = $("logList");
+  ul.innerHTML = "";
+  [...log].map((r, i) => ({ r, i })).reverse().forEach(({ r, i }) => {
+    const li = document.createElement("li");
+    const d = new Date(r.t * 1000);
+    const span = document.createElement("span");
+    span.textContent = `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}　`
+      + `${MOODS[r.score]}　${r.p != null ? r.p.toFixed(1) + "hPa" : ""}`
+      + `${r.change != null ? "　6時間で " + signed(r.change) : ""}　${r.place || ""}`;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.textContent = "消す";
+    del.addEventListener("click", () => {
+      if (!confirm("この記録を消しますか？（元に戻せません）")) return;
+      const now = loadLog();
+      now.splice(i, 1);
+      saveLog(now);
+      renderLog();
+      if (last) drawChart(last);
+    });
+    li.append(span, del);
+    ul.appendChild(li);
+  });
+  if (!log.length) ul.innerHTML = "<li><span>まだ記録がありません</span></li>";
+}
+
+function drawScatter(rows) {
+  const svg = $("scatter");
+  const W = Math.max(320, Math.round(svg.clientWidth || 900));
+  const H = 150, L = 70, R = 10, T = 14, B = 28;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const m = Math.max(8, Math.ceil(Math.max(0, ...rows.map(r => Math.abs(r.change)))));
+  const x = c => L + (c + m) / (2 * m) * (W - L - R);
+  const y = sc => T + (MAX_SCORE - sc) / (MAX_SCORE - 1) * (H - T - B);
+  let s = "";
+  // 背景（グラフと同じ色分け）
+  const zones = [[-m, -6, "--down2"], [-6, -3, "--down1"], [3, 6, "--up1"], [6, m, "--up2"]];
+  for (const [a, b, col] of zones) s += `<rect x="${x(a)}" y="${T - 6}" width="${x(b) - x(a)}" height="${H - T - B + 12}" fill="var(${col})"/>`;
+  for (let sc = 1; sc <= MAX_SCORE; sc++) {
+    s += `<line x1="${L}" x2="${W - R}" y1="${y(sc)}" y2="${y(sc)}" stroke="var(--grid)"/>`;
+    s += `<text x="${L - 6}" y="${y(sc) + 4}" text-anchor="end">${MOODS[sc]}</text>`;
+  }
+  for (const c of [-m, -6, -3, 0, 3, 6, m]) {
+    s += `<text x="${x(c)}" y="${H - 8}" text-anchor="middle">${c > 0 ? "+" + c : c}</text>`;
+  }
+  s += `<line x1="${x(0)}" x2="${x(0)}" y1="${T - 6}" y2="${H - B + 6}" stroke="var(--grid)"/>`;
+  // 点（同じ場所に重ならないよう、少しだけ上下にずらす）
+  rows.forEach((r, i) => {
+    const jit = ((i * 7) % 5 - 2) * 2.5;
+    s += `<circle cx="${x(r.change)}" cy="${y(r.score) + jit}" r="5" fill="var(--now)" opacity=".75"/>`;
+  });
+  svg.innerHTML = s;
+}
+
+function exportCsv() {
+  const rows = [["日時", "体調", "体調（ことば）", "気圧hPa", "6時間の変化hPa", "場所", "緯度", "経度"]];
+  for (const r of loadLog()) {
+    const d = new Date(r.t * 1000);
+    const ds = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    rows.push([ds, r.score, MOODS[r.score], r.p, r.change, r.place, r.lat, r.lon]);
+  }
+  const csv = "﻿" + rows.map(row => row.map(v => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = "taicho-kiatsu.csv";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// ---- 操作 ----
+for (const b of document.querySelectorAll(".moods button")) {
+  b.addEventListener("click", () => record(Number(b.dataset.score)));
+}
+$("exportCsv").addEventListener("click", exportCsv);
+// 過去の体調: 日時と体調を選び、表示中の場所の、その時刻の気圧で記録する
+function localInputValue(d) {
+  const z = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(d.getHours())}:${z(d.getMinutes())}`;
+}
+$("pastBox").addEventListener("toggle", () => {
+  const now = new Date();
+  $("pastWhen").max = localInputValue(now);
+  if (!$("pastWhen").value) $("pastWhen").value = localInputValue(new Date(now.getTime() - 3 * HOUR * 1000));
+  $("pastPlace").textContent = place.name;
+});
+$("pastForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const d = new Date($("pastWhen").value);
+  if (isNaN(d)) return;
+  if (d.getTime() > Date.now()) { $("recMsg").textContent = "未来の日時は入れられません"; return; }
+  await addRecord(Math.round(d.getTime() / 1000), Number($("pastScore").value),
+                  { name: place.name, lat: place.lat, lon: place.lon }, $("recMsg"));
+});
+$("searchForm").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  const q = $("cityInput").value.trim();
+  const ul = $("cands");
+  ul.innerHTML = "";
+  if (!q) return;
+  $("searchMsg").textContent = "検索中…";
+  let list = [];
+  try { list = await geocode(q); } catch (e) { $("searchMsg").textContent = "検索できませんでした（" + e.message + "）"; return; }
+  if (list.length === 0) { $("searchMsg").textContent = `「${q}」は見つかりませんでした。「郡山市」のように市まで入れてみてください`; return; }
+  $("searchMsg").textContent = "表示する場所を選んでください";
+  for (const r of list) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    const sub = [r.admin1, r.country].filter(Boolean).join("・");
+    btn.append(r.name + " ");
+    const sm = document.createElement("small");
+    sm.textContent = sub;
+    btn.append(sm);
+    btn.addEventListener("click", () => {
+      ul.innerHTML = "";
+      $("search").hidden = true;
+      show({ name: r.name, lat: r.latitude, lon: r.longitude, src: r.admin1 || r.country || "" });
+    });
+    li.appendChild(btn);
+    ul.appendChild(li);
+  }
+});
+$("showSearch").addEventListener("click", () => {
+  $("search").hidden = !$("search").hidden;
+  $("searchMsg").textContent = "都市名を入れてください（例: 郡山、仙台、東京）";
+  if (!$("search").hidden) $("cityInput").focus();
+});
+$("useGps").addEventListener("click", useGps);
+function markRange() {
+  for (const b of document.querySelectorAll(".range button")) b.classList.toggle("on", Number(b.dataset.days) === rangeDays);
+  $("farNote").hidden = rangeDays <= 3;
+}
+for (const b of document.querySelectorAll(".range button")) {
+  b.addEventListener("click", () => {
+    rangeDays = Number(b.dataset.days);
+    try { localStorage.setItem("kiatsuDays", String(rangeDays)); } catch (e) {}
+    markRange();
+    show(place);
+  });
+}
+markRange();
+$("reload").addEventListener("click", () => show(place));
+window.addEventListener("resize", () => { if (last) drawChart(last); drawScatter(loadLog().filter(r => r.change != null)); });
+renderLog();
+try { localStorage.getItem(LOG_KEY); } catch (e) { $("storeWarn").hidden = false; }
+
+// 最初は福島市を表示し、そのあと現在地に切り替える
+show(DEFAULT_PLACE);
+useGps();
+</script>
+</body>
+</html>
