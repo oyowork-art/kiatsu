@@ -21,6 +21,8 @@
     --up1: rgba(225, 60, 50, .16); --up2: rgba(210, 40, 30, .40);
     --downText: #2462c4; --upText: #c53030;
     --none: #2f855a; --warn1: #b7791f; --warn2: #c53030;
+    /* 体調の色（折れ線）: とても悪い＝紫、悪い＝オレンジ、ふつう＝緑。背景の青・赤と重ならない色 */
+    --mood1: #7b3fc4; --mood2: #dd7a00; --mood3: #2f8a4e;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -30,6 +32,7 @@
       --up1: rgba(255, 90, 80, .18); --up2: rgba(255, 90, 80, .42);
       --downText: #7fb0ff; --upText: #fc8181;
       --none: #68d391; --warn1: #f6c453; --warn2: #fc8181;
+      --mood1: #b98af0; --mood2: #f6a94a; --mood3: #5fcf8a;
     }
   }
   * { box-sizing: border-box; }
@@ -83,6 +86,11 @@
   ul.log li span { flex: 1; }
   ul.log button { padding: 2px 10px; }
   details summary { cursor: pointer; color: var(--line); font-size: .9rem; margin-top: 8px; }
+  form.auth { display: grid; gap: 8px; margin-top: 8px; }
+  form.auth input { font-size: 16px; padding: 10px; border-radius: 8px; border: 1px solid var(--grid);
+    background: var(--card); color: var(--text); }
+  .authBtns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .authBtns button[type=submit] { background: var(--now); color: var(--bg); border-color: var(--now); font-weight: 700; }
   form.past { display: grid; gap: 10px; margin-top: 10px; }
   form.past label { display: flex; align-items: center; gap: 8px; font-size: .95rem; }
   form.past input, form.past select { flex: 1; font-size: 16px; padding: 8px; border-radius: 8px;
@@ -118,6 +126,19 @@
 
   <section class="card">
     <div class="level-label">今の体調を記録</div>
+    <div id="authWait" class="detail" style="margin-top:8px">ログインを確認しています…</div>
+    <form id="authForm" class="auth" hidden>
+      <p class="detail" style="margin:4px 0 0">記録はアカウントに保存されます。ログインすると、どの端末からでも同じ記録が見られます。</p>
+      <input id="authEmail" type="email" autocomplete="username" placeholder="メールアドレス" required>
+      <input id="authPass" type="password" autocomplete="current-password" placeholder="パスワード（6文字以上）" required minlength="6">
+      <div class="authBtns">
+        <button type="submit">ログイン</button>
+        <button type="button" id="signUpBtn">はじめて使う（登録）</button>
+      </div>
+      <button type="button" class="linkbtn" id="resetBtn" style="justify-self:start">パスワードを忘れたとき</button>
+      <div id="authMsg" class="detail"></div>
+    </form>
+    <div id="recArea" hidden>
     <div class="moods">
       <button type="button" data-score="1"><b>とても悪い</b></button>
       <button type="button" data-score="2"><b>悪い</b></button>
@@ -137,6 +158,8 @@
         <button type="submit">この内容で記録</button>
       </form>
     </details>
+    <div id="acct" class="far" style="margin-top:10px"></div>
+    </div>
   </section>
 
   <section class="card">
@@ -149,7 +172,7 @@
       <span><span class="sw" style="background:var(--down1)"></span><span class="sw" style="background:var(--down2)"></span>下がる（薄い＝6時間で3hPa以上、濃い＝6hPa以上）</span>
       <span><span class="sw" style="background:var(--up1)"></span><span class="sw" style="background:var(--up2)"></span>上がる（薄い＝3hPa以上、濃い＝6hPa以上）</span>
       <span>｜ 縦線＝今</span>
-      <span>体調の記録: ○ふつう △悪い ✕とても悪い</span>
+      <span>線の色＝体調の記録（次の記録まで同じ色）: <b style="color:var(--mood3)">○ふつう</b> <b style="color:var(--mood2)">△悪い</b> <b style="color:var(--mood1)">✕とても悪い</b>　記録がない部分と今より先は、もとの色</span>
     </div>
     <div id="farNote" class="far" hidden>4日より先の予報は外れやすいので、大まかな目安として見てください。</div>
   </section>
@@ -171,7 +194,7 @@
       <ul id="logList" class="log"></ul>
       <button id="exportCsv" type="button">CSVで書き出す</button>
     </details>
-    <div id="storeWarn" class="far err" hidden>この画面では記録を保存できません（閉じると消えます）。https で公開したページで使ってください。</div>
+    <div id="storeWarn" class="far err" hidden>この画面では、記録をこの端末に控えておけません。記録はアカウントには保存されます。</div>
   </section>
 
   <p class="note">目安です。痛みが続くときは医療機関へ。<br>データ: Open-Meteo.com</p>
@@ -188,24 +211,30 @@ let rangeDays = 3;
 try { if (localStorage.getItem("kiatsuDays") === "10") rangeDays = 10; } catch (e) {}
 const $ = id => document.getElementById(id);
 
-// ---- 体調の記録（この端末のブラウザに保存） ----
+// ---- 体調の記録 ----
+// 記録の本体は Firebase（Firestore の users/<uid>/records）。この端末には控え（キャッシュ）を置く
 // 体調は3段階: 1 とても悪い、2 悪い、3 ふつう
 const MOODS = [null, "とても悪い", "悪い", "ふつう"];
 const MAX_SCORE = 3;
 const MARKS = [null, "✕", "△", "○"]; // 気圧のグラフに出す印
-const LOG_KEY = "kiatsuLog";
-let memLog = null; // 保存できない環境のときの置き場
+const LEGACY_KEY = "kiatsuLog";       // ログインを作る前の、この端末だけの記録
+let user = null;                      // ログイン中の人（uid, email）
+let memLog = null;                    // 控えを保存できない環境のときの置き場
+const cacheKey = () => "kiatsuLog:" + user.uid;
+const newId = t => `${t}-${Math.random().toString(36).slice(2, 8)}`;
+// 5段階のころの記録（4・5）は「ふつう」として扱う。id がなければ付ける
+const norm = r => ({ ...r, score: Math.min(r.score, MAX_SCORE), id: r.id || newId(r.t) });
+const strip = r => { const { pending, ...rest } = r; return rest; }; // クラウドに送る形
 function loadLog() {
+  if (!user) return [];
   if (memLog) return memLog;
-  try {
-    // 5段階のころの記録（4・5）は「ふつう」として扱う
-    return JSON.parse(localStorage.getItem(LOG_KEY) || "[]").map(r => ({ ...r, score: Math.min(r.score, MAX_SCORE) }));
-  }
+  try { return JSON.parse(localStorage.getItem(cacheKey()) || "[]").map(norm); }
   catch (e) { memLog = []; return memLog; }
 }
 function saveLog(log) {
   log.sort((a, b) => a.t - b.t); // 過去の分をあとから入れても時刻順にしておく
-  try { localStorage.setItem(LOG_KEY, JSON.stringify(log)); memLog = null; }
+  if (!user) return;
+  try { localStorage.setItem(cacheKey(), JSON.stringify(log)); memLog = null; }
   catch (e) { memLog = log; }
   $("storeWarn").hidden = !memLog;
 }
@@ -458,17 +487,47 @@ function drawChart(a) {
     if (j.h === 0) s += `<text x="${xx}" y="${H - B + 32}" text-anchor="middle">${j.m}/${j.d}(${j.wd})</text>`;
   }
 
-  // 折れ線
-  const pts = a.shown.map(r => `${clampX(r.t).toFixed(1)},${y(r.p).toFixed(1)}`).join(" ");
-  s += `<polyline points="${pts}" fill="none" stroke="var(--line)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  // 折れ線（体調の記録の色で塗り分ける）
+  // 今表示している場所の近くで記録したものだけを使う
+  const recs = loadLog().filter(r => Math.abs(r.lat - place.lat) <= 0.25 && Math.abs(r.lon - place.lon) <= 0.25).sort((p, q) => p.t - q.t);
+  // 時刻 t の色: t より前の一番新しい記録の色。記録がないときと、今より先（予報）は黒
+  const colorAt = t => {
+    if (t > a.now) return "--line";
+    let c = "--line";
+    for (const r of recs) { if (r.t <= t) c = "--mood" + r.score; else break; }
+    return c;
+  };
+  // 線上の気圧（時刻 t のところを前後の値でつなぐ）
+  const pAt = t => {
+    const sh = a.shown;
+    for (let i = 1; i < sh.length; i++) {
+      if (sh[i].t >= t) { const k = (t - sh[i - 1].t) / (sh[i].t - sh[i - 1].t); return sh[i - 1].p + (sh[i].p - sh[i - 1].p) * k; }
+    }
+    return null;
+  };
+  // 記録の時刻と今の時刻で線を区切り、同じ色が続くところを1本の線にする
+  const cuts = [...recs.map(r => r.t), a.now].filter(t => t > a.shown[0].t && t < a.shown[a.shown.length - 1].t);
+  const pts2 = [...a.shown.map(r => ({ t: r.t, p: r.p })), ...cuts.map(t => ({ t, p: pAt(t) }))].sort((p, q) => p.t - q.t);
+  let run = null;
+  const flush = () => { if (run && run.pts.length > 1) s += `<polyline points="${run.pts.join(" ")}" fill="none" stroke="var(${run.color})" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>`; };
+  for (let i = 0; i < pts2.length - 1; i++) {
+    const p1 = pts2[i], p2 = pts2[i + 1];
+    if (p2.t <= p1.t) continue;
+    const color = colorAt((p1.t + p2.t) / 2);
+    const xy = q => `${clampX(q.t).toFixed(1)},${y(q.p).toFixed(1)}`;
+    if (!run || run.color !== color) { flush(); run = { color, pts: [xy(p1)] }; }
+    run.pts.push(xy(p2));
+  }
+  flush();
 
-  // 体調の記録を折れ線の上に点で出す（今表示している場所の近くで記録したものだけ）
-  for (const r of loadLog()) {
-    if (r.p == null || r.t < a.start || r.t > a.end) continue;
-    if (Math.abs(r.lat - place.lat) > 0.25 || Math.abs(r.lon - place.lon) > 0.25) continue;
-    const cx = x(r.t), cy = y(r.p);
-    s += `<circle cx="${cx}" cy="${cy}" r="9" fill="var(--card)" stroke="var(--now)" stroke-width="2"/>`;
-    s += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" style="fill:var(--now);font-weight:700">${MARKS[r.score]}</text>`;
+  // 体調の記録を折れ線の上に印で出す
+  for (const r of recs) {
+    if (r.t < a.start || r.t > a.end) continue;
+    const lp = pAt(r.t);
+    if (lp == null) continue;
+    const cx = x(r.t), cy = y(lp);
+    s += `<circle cx="${cx}" cy="${cy}" r="9" fill="var(--card)" stroke="var(--mood${r.score})" stroke-width="2.5"/>`;
+    s += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" style="fill:var(--mood${r.score});font-weight:700">${MARKS[r.score]}</text>`;
   }
 
   // 今の縦線
@@ -522,7 +581,16 @@ async function pressureAt(lat, lon, t) {
     const res = await fetch(`https://api.open-meteo.com/v1/forecast?${q}&start_hour=${iso(h - 6 * HOUR)}&end_hour=${iso(h)}`);
     if (res.ok) { const r = pick(await res.json()); if (r) return r; }
   } catch (e) {}
-  const res = await fetch(`https://archive-api.open-meteo.com/v1/archive?${q}&start_date=${iso(h - 6 * HOUR).slice(0, 10)}&end_date=${iso(h).slice(0, 10)}`);
+  // 過去データの API は返事が遅いことがあるので、15秒で区切る
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(`https://archive-api.open-meteo.com/v1/archive?${q}&start_date=${iso(h - 6 * HOUR).slice(0, 10)}&end_date=${iso(h).slice(0, 10)}`, { signal: ctl.signal });
+  } catch (e) {
+    throw new Error(e.name === "AbortError" ? "過去の気圧のデータが今は取れません。しばらくしてから、もう一度ためしてください" : "インターネットにつながっていません");
+  } finally { clearTimeout(timer); }
+  if (res.status === 429 || res.status >= 500) throw new Error("過去の気圧のデータが今は混み合っていて取れません。しばらくしてから、もう一度ためしてください");
   if (!res.ok) throw new Error("その日時の気圧が見つかりませんでした");
   const r = pick(await res.json());
   if (!r) throw new Error("その日時の気圧が見つかりませんでした");
@@ -531,23 +599,129 @@ async function pressureAt(lat, lon, t) {
 
 // 記録を1件足す（場所 where の、時刻 t の気圧で）
 async function addRecord(t, score, where, msgEl) {
+  if (!user) { msgEl.textContent = "記録するには、ログインしてください"; return false; }
+  const uid = user.uid;
   msgEl.textContent = "気圧を調べています…";
   let pr;
   try { pr = await pressureAt(where.lat, where.lon, t); }
   catch (e) { msgEl.textContent = "記録できませんでした（" + e.message + "）"; return false; }
+  // 調べている間にログアウト・別の人に切り替わったときは、記録しない
+  if (!user || user.uid !== uid) { msgEl.textContent = ""; return false; }
+  const rec = { id: newId(t), t, score, p: pr.p, change: pr.change, place: where.name, lat: where.lat, lon: where.lon, pending: true };
   const log = loadLog();
-  log.push({ t, score, p: pr.p, change: pr.change, place: where.name, lat: where.lat, lon: where.lon });
-  saveLog(log);
+  log.push(rec);
+  saveLog(log); // まずこの端末に控え、そのあとアカウントに送る
   const d = new Date(t * 1000);
-  msgEl.textContent = `記録しました: ${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}　${MOODS[score]}`
+  const text = `記録しました: ${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, "0")}　${MOODS[score]}`
     + `　${where.name}　気圧 ${pr.p.toFixed(1)} hPa` + (pr.change != null ? `、6時間で ${signed(pr.change)}` : "");
+  msgEl.textContent = text;
   renderLog();
   if (last) drawChart(last);
+  uploadRecord(rec).catch(() => { msgEl.textContent = text + "（ネットにつながったら、アカウントに送ります）"; });
   return true;
+}
+
+// ---- アカウント（Firebase）との同期 ----
+// 1件をアカウントに送る。送れたら「未送信」の印を外す
+async function uploadRecord(rec) {
+  const uid = user.uid;
+  await window.cloud.put(uid, strip(rec));
+  if (!user || user.uid !== uid) return;
+  const log = loadLog();
+  const r = log.find(x => x.id === rec.id);
+  if (r) { delete r.pending; saveLog(log); }
+}
+// ログインしたとき: ログイン前の記録と未送信の記録を送り、アカウントの記録をこの端末に控える
+async function syncAll() {
+  const uid = user.uid;
+  $("syncMsg").textContent = "記録を読み込んでいます…";
+  try {
+    let legacy = [];
+    try { legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || "[]").map(norm); } catch (e) {}
+    const up = [...legacy, ...loadLog().filter(r => r.pending)];
+    if (up.length) await window.cloud.putMany(uid, up.map(strip));
+    if (legacy.length) {
+      // 念のため控えを残してから、ログイン前の記録を片づける
+      try { localStorage.setItem(LEGACY_KEY + ":backup", localStorage.getItem(LEGACY_KEY)); localStorage.removeItem(LEGACY_KEY); } catch (e) {}
+    }
+    const all = await window.cloud.fetchAll(uid);
+    if (!user || user.uid !== uid) return;
+    saveLog(all.map(norm));
+    $("syncMsg").textContent = legacy.length ? `この端末にあった記録 ${legacy.length} 件を、アカウントに移しました` : "";
+  } catch (e) {
+    $("syncMsg").textContent = "アカウントの記録を読み込めませんでした（" + errText(e) + "）。この端末の控えを表示しています";
+  }
+  renderLog();
+  if (last) drawChart(last);
+}
+
+const AUTH_ERR = {
+  "auth/invalid-credential": "メールアドレスかパスワードが違います",
+  "auth/invalid-login-credentials": "メールアドレスかパスワードが違います",
+  "auth/wrong-password": "メールアドレスかパスワードが違います",
+  "auth/user-not-found": "メールアドレスかパスワードが違います",
+  "auth/email-already-in-use": "このメールアドレスはもう登録されています。「ログイン」を押してください",
+  "auth/weak-password": "パスワードは6文字以上にしてください",
+  "auth/invalid-email": "メールアドレスの形が正しくありません",
+  "auth/missing-password": "パスワードを入れてください",
+  "auth/too-many-requests": "何度も失敗したので、しばらく待ってからもう一度ためしてください",
+  "auth/network-request-failed": "インターネットにつながっていません",
+  "auth/unauthorized-domain": "このページの場所が Firebase で許可されていません（承認済みドメイン）",
+  "permission-denied": "記録を読み書きする権限がありません（Firestore のルール）",
+  "unavailable": "インターネットにつながっていません",
+};
+const errText = e => AUTH_ERR[e && e.code] || (e && e.message) || String(e);
+
+// ログインの状態が変わったとき（Firebase の部分から呼ばれる）
+window.onAuthChange = u => {
+  user = u ? { uid: u.uid, email: u.email } : null;
+  memLog = null;
+  $("authWait").hidden = true;
+  $("authForm").hidden = !!user;
+  $("recArea").hidden = !user;
+  $("acct").innerHTML = "";
+  if (user) {
+    const who = document.createElement("span");
+    who.textContent = `${user.email} でログイン中　`;
+    const out = document.createElement("button");
+    out.type = "button"; out.className = "linkbtn"; out.textContent = "ログアウト";
+    out.addEventListener("click", () => { if (confirm("ログアウトしますか？")) window.cloud.signOut(); });
+    const sm = document.createElement("div");
+    sm.id = "syncMsg";
+    $("acct").append(who, out, sm);
+    syncAll();
+  } else {
+    $("recMsg").textContent = "";
+  }
+  renderLog();
+  if (last) drawChart(last);
+};
+
+async function authDo(kind) {
+  const form = $("authForm");
+  if (kind !== "reset" && !form.reportValidity()) return;
+  const email = $("authEmail").value.trim(), pass = $("authPass").value;
+  if (!window.cloud) { $("authMsg").textContent = "ログインの仕組みを読み込めていません。ネットにつながっているか確かめて、ページを開き直してください"; return; }
+  $("authMsg").textContent = "確認しています…";
+  try {
+    if (kind === "in") await window.cloud.signIn(email, pass);
+    else if (kind === "up") await window.cloud.signUp(email, pass);
+    else {
+      if (!$("authEmail").reportValidity()) { $("authMsg").textContent = ""; return; }
+      await window.cloud.reset(email);
+      $("authMsg").textContent = `${email} に、パスワードを決め直すためのメールを送りました（登録されているときだけ届きます）`;
+      return;
+    }
+    $("authMsg").textContent = "";
+    $("authPass").value = "";
+  } catch (e) {
+    $("authMsg").textContent = errText(e);
+  }
 }
 
 // 今の体調: 記録した場所は GPS で取り、取れないときは表示中の場所にする
 async function record(score) {
+  if (!user) { $("recMsg").textContent = "記録するには、ログインしてください"; return; }
   const t = Math.round(Date.now() / 1000);
   $("recMsg").textContent = "場所を確認しています…";
   let where = { name: place.name, lat: place.lat, lon: place.lon };
@@ -593,6 +767,7 @@ function renderLog() {
         : diff <= -20 ? "今のところ、大きく変わるときのほうが体調は良いようです。"
         : "今のところ、はっきりした差はありません。");
   }
+  if (!user) note = "ログインすると、自分の記録と気圧の変化の関係が見られます。";
   $("relNote").textContent = note;
 
   drawScatter(withChange);
@@ -612,11 +787,11 @@ function renderLog() {
     del.textContent = "消す";
     del.addEventListener("click", () => {
       if (!confirm("この記録を消しますか？（元に戻せません）")) return;
-      const now = loadLog();
-      now.splice(i, 1);
+      const now = loadLog().filter(x => x.id !== r.id);
       saveLog(now);
       renderLog();
       if (last) drawChart(last);
+      window.cloud.del(user.uid, r.id).catch(e => { $("syncMsg").textContent = "アカウントから消せませんでした（" + errText(e) + "）"; });
     });
     li.append(span, del);
     ul.appendChild(li);
@@ -742,11 +917,61 @@ markRange();
 $("reload").addEventListener("click", () => show(place));
 window.addEventListener("resize", () => { if (last) drawChart(last); drawScatter(loadLog().filter(r => r.change != null)); });
 renderLog();
-try { localStorage.getItem(LOG_KEY); } catch (e) { $("storeWarn").hidden = false; }
+$("authForm").addEventListener("submit", ev => { ev.preventDefault(); authDo("in"); });
+$("signUpBtn").addEventListener("click", () => authDo("up"));
+$("resetBtn").addEventListener("click", () => authDo("reset"));
+// Firebase の部分が読み込めないとき（ネットにつながっていないなど）
+setTimeout(() => {
+  if (!window.cloud) {
+    $("authWait").textContent = "ログインの仕組みを読み込めませんでした。ネットにつながっているか確かめて、ページを開き直してください";
+  }
+}, 10000);
 
 // 最初は福島市を表示し、そのあと現在地に切り替える
 show(DEFAULT_PLACE);
 useGps();
+</script>
+
+<!-- Firebase（ログインと記録の保存）。設定の値は秘密ではなく、記録は Firestore のルールで本人だけに守られる -->
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-app.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+         sendPasswordResetEmail, signOut } from "https://www.gstatic.com/firebasejs/12.4.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, getDocs, writeBatch }
+  from "https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDxVRmoxXvPW9JzXixOr6gHF_zEjp-TMVM",
+  authDomain: "kiatsu-e15f4.firebaseapp.com",
+  projectId: "kiatsu-e15f4",
+  storageBucket: "kiatsu-e15f4.firebasestorage.app",
+  messagingSenderId: "566621095733",
+  appId: "1:566621095733:web:7c8258dfeabfbbe35cee7c"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+auth.languageCode = "ja"; // パスワードを決め直すメールを日本語にする
+const db = getFirestore(app);
+const recDoc = (uid, id) => doc(db, "users", uid, "records", id);
+
+// テストのときに差し替えられるよう、すでにあるときは上書きしない
+window.cloud = window.cloud || {
+  signIn: (email, pass) => signInWithEmailAndPassword(auth, email, pass),
+  signUp: (email, pass) => createUserWithEmailAndPassword(auth, email, pass),
+  reset: email => sendPasswordResetEmail(auth, email),
+  signOut: () => signOut(auth),
+  fetchAll: async uid => (await getDocs(collection(db, "users", uid, "records"))).docs.map(d => ({ ...d.data(), id: d.id })),
+  put: (uid, r) => setDoc(recDoc(uid, r.id), r),
+  del: (uid, id) => deleteDoc(recDoc(uid, id)),
+  putMany: async (uid, rs) => {
+    for (let i = 0; i < rs.length; i += 400) { // 1回に送れる数に上限があるので分ける
+      const b = writeBatch(db);
+      for (const r of rs.slice(i, i + 400)) b.set(recDoc(uid, r.id), r);
+      await b.commit();
+    }
+  },
+};
+onAuthStateChanged(auth, u => window.onAuthChange(u));
 </script>
 </body>
 </html>
